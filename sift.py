@@ -10,15 +10,6 @@ from sklearn.preprocessing import normalize
 from math import log, sqrt, cos, sin
 from scipy.ndimage import convolve
 
-def show_img(img, dpi=90, scale_coeff=2):
-
-        fig = plt.figure(figsize=(scale_coeff*img.shape[1]/dpi, scale_coeff*img.shape[0]/dpi), dpi=dpi)
-        ax = fig.add_axes([0,0,1,1])
-        ax.imshow(img, cmap='gray')
-        ax.set_xticks([]), ax.set_yticks([])
-        ax.axis([0, img.shape[1], img.shape[0], 0])
-        plt.show()
-
 #representing porabola y = ax^2 + bx + c
 class Porabola:
 
@@ -51,29 +42,26 @@ class Porabola:
 class SIFT:
         #current problem:
                 #1) fix proper img at descriptor creation / done
-                #2) fit porabole
-                #3) trilinear interpolation what the fuck is that ???/
+                #2) fit porabole /done
+                #3) trilinear interpolation /done
+                #4) why do i have less keypoints than cv2.SIFT
+                #5) similar points don't have the same features
 
-        #keypoint orientation gauss window?
-        #discriptor itself histograms 4*4?? why it's just like that
-        #produce s+3 images in each octave?
-        #interpolation when calculatin 4*4 bins
-
-        def __init__(self, img, init_sigma=1.6, s=3, octave_sigma_diff_by=2, amount_of_octaves=4, threshhold=0.03, pre_smooth_sigma=0.5, is_prior_x2_scale=True):
+        def __init__(self, img, init_sigma=1.6, s=3, octave_sigma_diff_by=2, amount_of_octaves=4, threshhold=0.04, nominal_sigma=0.5, is_prior_x2_scale=True):
 
                 self.k = pow(octave_sigma_diff_by, 1.0 / s)
                 self.s = s               
                 self.img = img#_as_float(color.rgb2gray(img))
                 self.last_img = self.img.copy()
                 # self.key_point = []
-                self.sigma = init_sigma
+                self.min_sigma = init_sigma
                 self.is_prior_x2_scale = is_prior_x2_scale
 
                 if is_prior_x2_scale:
-                        self.pre_smooth_sigma = pre_smooth_sigma * 2
-                        self.octave_amount = amount_of_octaves + 1
+                        self.nominal_sigma = nominal_sigma * 2
+                        self.octave_amount = amount_of_octaves #+ 1
                 else:
-                        self.pre_smooth_sigma = pre_smooth_sigma
+                        self.nominal_sigma = nominal_sigma
                         self.octave_amount = amount_of_octaves
 
                 self.threshhold = threshhold
@@ -129,9 +117,9 @@ class SIFT:
                 max_sigma = np.max(keypoints[:, 2])
                 
                 if self.is_prior_x2_scale:
-                        sigma_counter = self.sigma / 2
+                        sigma_counter = self.min_sigma / 2
                 else:
-                        sigma_counter = self.sigma
+                        sigma_counter = self.min_sigma
 
                 if all_at_once:
                         _, ax = create_fig_and_axe(self.img, scale_fig_coeff, dpi)
@@ -146,7 +134,8 @@ class SIFT:
 
                 # print(keypoints)
                 for keypoint in keypoints:
-                        print(keypoint[0], keypoint[1], keypoint[2], 'keypoint')
+                        # print(keypoint[0], keypoint[1], keypoint[2], 'keypoint')
+
                         # color = np.array((random.randint(0,100), random.randint(0,100), random.randint(0,100))) / 100
                         # was for case if we change sigma of the keypoint
                         # bot_lim = sigma_counter - (sigma_counter - sigma_counter/self.k)/2
@@ -213,37 +202,54 @@ class SIFT:
                 return img_copy
 
         #list [array((array(smoothed_img), smoothing_sigma, gradient_of_smoothed_img, angles_of_smoohted_img))]
-        def create_gaussian_pyramid(self):
+        def create_gaussian_pyramid(self):#using previous img
 
                 #doubling the size
                 sample_img = self.img.copy()
-                sample_img = resize(self.img.copy(), (int(sample_img.shape[0]*2), int(sample_img.shape[1]*2)))
+                if self.is_prior_x2_scale:
+                        sample_img = resize(self.img.copy(), (int(sample_img.shape[0]*2), int(sample_img.shape[1]*2)))
 
-                #presmoothing image
-                sample_img = gaussian(sample_img, self.pre_smooth_sigma)
+                #presmoothing image to match self.min_sigma
+                sigma0 = sqrt(self.min_sigma**2 - self.nominal_sigma**2)
+                # sample_img = gaussian(sample_img, sigma0)
+                
+                #sigmas to smooth_with
+                sigma_list = [self.min_sigma]
+                for s in range(1, self.s+3):
+                        new_sigma = self.min_sigma*self.k**s
+                        sigma_list.append(sqrt(new_sigma**2 - sigma_list[-1]**2))
+
                 scale_space = []
+                for octave_num in range(self.octave_amount):
 
-                for _ in range(self.octave_amount):
-
-                        # print("octave", sample_img.shape)
-                        # sigma /= 2 #ratio cuz of rescaling
-                        # new_img = img_as_float(gaussian(sample_img, sigma=sigma))
-
-                        # angles = self.grad_angles(new_img)
-                        # octave = [(new_img, sigma, sobel(new_img), angles)]
                         octave = []
-                        for i in range(-1, self.s + 3 - 1):
+                        for sub_sample_num in range(self.s+3):
 
-                                sigma = pow(self.k, i) * self.sigma
-                                # print("in octave", sigma)
-                                new_img = gaussian(sample_img, sigma=sigma)
-                                angles = self.grad_angles(new_img)
+                                if (octave_num == 0) and (sub_sample_num == 0):
 
-                                octave.append((new_img, sigma, sobel(new_img), angles))
+                                        sample_img = gaussian(sample_img, sigma0)
+                                        angles = self.grad_angles(sample_img)
+                                        gradients = sobel(sample_img)
+                                        octave.append((sample_img, self.min_sigma, gradients, angles))
+                                        
+                                else:
+                                        if sub_sample_num == 0:
+
+                                                last_octave = scale_space[-1]
+                                                sample_img = last_octave[self.s][0]
+                                                sample_img = resize(sample_img, (int(sample_img.shape[0]/2), int(sample_img.shape[1]/2)))
+                                                angles = self.grad_angles(sample_img)
+                                                gradients = sobel(sample_img)
+                                                octave.append((sample_img, self.min_sigma, gradients, angles))
+                                        
+                                        else:
+                                                
+                                                sample_img = gaussian(sample_img, sigma_list[sub_sample_num])
+                                                angles = self.grad_angles(sample_img)
+                                                gradients = sobel(sample_img)
+                                                octave.append((sample_img, sigma_list[sub_sample_num], gradients, angles))
 
                         scale_space.append(np.array(octave))
-
-                        sample_img = resize(sample_img, (int(sample_img.shape[0]/2), int(sample_img.shape[1]/2)))
 
                 return scale_space
 
@@ -262,7 +268,7 @@ class SIFT:
 
                 return DoG
 
-        # def amend_point(self, row, col, sigma, low_lvl, mid_lvl, top_lvl, r=10): # just holy moly trash
+        # def amend_point(self, row, col, sigma, low_lvl, mid_lvl, top_lvl, r=10)
         def amend_point(self, row, col, index, DoG_octave, r=10):
 
                 def calc_dD_and_d2D(row, col, index):
@@ -292,16 +298,14 @@ class SIFT:
                         
                         return J, d2J
 
-                def find_accurate_extreme(row, col, limit=3): #not changing sigma?
+                def find_accurate_extreme(row, col, limit=3): 
 
                         def correct_offset(var, offset):
 
-                                # limits = np.array((mid_lvl.shape[0], mid_lvl.shape[1], var[2] + 2))
                                 new_var = var + offset
 
                                 if (new_var > 0).all() and (DoG_octave[index,0].shape[0] - new_var[0] > 0) and\
                                         (DoG_octave[index,0].shape[1] - new_var[1] > 0) and (DoG_octave[1,1] <= new_var[2] <=DoG_octave[-1,1]):
-                                        #(limits - new_var > 0).all():
                                         return offset
                                 else:
                                         return np.array([0,0,0])
@@ -384,7 +388,6 @@ class SIFT:
 
                                         # var = (row, col, DoG_octave[index, 1])
                                         # debug_draw(DoG_octave[index, 0], (row, col), DoG_octave[index, 1])
-                                        self.counter += 1
                                         var = self.amend_point(row, col, index, DoG_octave)#, mid_sigma, low_lvl, mid_lvl, top_lvl)
                                         if (np.array(var) >= 0).all():
                                                 extreme_points.append(var)
@@ -395,12 +398,13 @@ class SIFT:
         def find_and_filter_key_points(self, DoG):
                 
                 keypoints = []
-                
+
                 if self.is_prior_x2_scale:
                         img_scale = 0.5
                 else:
                         img_scale = 1
 
+                
                 for DoG_octave in DoG:
 
                         for index in range(1, DoG_octave.shape[0]-1):
@@ -408,7 +412,6 @@ class SIFT:
                                 extremes = self.find_all_extremes(index, DoG_octave)
 
                                 if len(extremes) != 0:
-                                        
                                         extremes = np.array(extremes)
                                         keypoints.append((extremes, DoG_octave[index, 1], img_scale))
 
@@ -523,7 +526,7 @@ class SIFT:
                         def create_sub_regions(hist_width, hist_bins, descriptor_window_width):
 
                                 sub_histograms_array = np.array((np.zeros((hist_bins, )), (np.array((0,0))))).reshape(1,2)
-                                #for hist_width = 4
+
                                 interval = (descriptor_window_width + 1) / (descriptor_window_width / hist_width + 1)
                                 coords = np.array([[(-3*interval/2, -3*interval/2), (-interval/2, -3*interval/2), (interval/2, -3*interval/2), (3*interval/2, -3*interval/2)], 
                                                         [(-3*interval/2, -interval/2), (-interval/2, -interval/2), (interval/2, -interval/2), (3*interval/2, -interval/2)],
@@ -811,11 +814,9 @@ class SIFT:
                 def create_solid_arr(keypoints):
 
                         new_arr = keypoints[0]
-                        print('solid in')
                         for key_bl in keypoints[1:]:
                                 new_arr = np.r_[new_arr, key_bl]
 
-                        print('solid out')
                         return new_arr
 
                 GaussPyr = self.create_gaussian_pyramid()
