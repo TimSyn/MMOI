@@ -9,6 +9,7 @@ import random
 from sklearn.preprocessing import normalize
 from math import log, sqrt, cos, sin
 from scipy.ndimage import convolve
+from matplotlib.patches import ConnectionPatch
 
 #representing porabola y = ax^2 + bx + c
 class Porabola:
@@ -39,33 +40,45 @@ class Porabola:
         def y(x):
                 return a* x**2 + b*x + c
 
+
+def my_imshow(img, dpi=80, scale_coeff=2):
+
+        figsize = scale_coeff * img.shape[1] / dpi, scale_coeff * img.shape[0] / dpi
+        fig = plt.figure(figsize=figsize, dpi=dpi)
+        ax = fig.add_axes([0,0,1,1])
+        ax.set_xticks([]), ax.set_yticks([])
+        ax.imshow(img, cmap='gray')
+        plt.show()
+
 class SIFT:
         #current problem:
                 #1) fix proper img at descriptor creation / done
                 #2) fit porabole /done
                 #3) trilinear interpolation /done
-                #4) why do i have less keypoints than cv2.SIFT
+                #4) why do i have less keypoints than cv2.SIFT/done
                 #5) similar points don't have the same features
 
-        def __init__(self, img, init_sigma=1.6, s=3, octave_sigma_diff_by=2, amount_of_octaves=4, threshhold=0.04, nominal_sigma=0.5, is_prior_x2_scale=True):
+        def __init__(self, img=[], init_sigma=1.6, s=3, octave_sigma_diff_by=2, amount_of_octaves=4, threshhold=0.04, nominal_sigma=0.5,\
+                        is_prior_x2_scale=True, is_static=False):
 
-                self.k = pow(octave_sigma_diff_by, 1.0 / s)
-                self.s = s               
-                self.img = img#_as_float(color.rgb2gray(img))
-                self.last_img = self.img.copy()
-                # self.key_point = []
-                self.min_sigma = init_sigma
-                self.is_prior_x2_scale = is_prior_x2_scale
+                if not is_static:
+                        self.k = pow(octave_sigma_diff_by, 1.0 / s)
+                        self.s = s               
+                        self.img = img#_as_float(color.rgb2gray(img))
+                        self.last_img = self.img.copy()
+                        # self.key_point = []
+                        self.min_sigma = init_sigma
+                        self.is_prior_x2_scale = is_prior_x2_scale
 
-                if is_prior_x2_scale:
-                        self.nominal_sigma = nominal_sigma * 2
-                        self.octave_amount = amount_of_octaves #+ 1
-                else:
-                        self.nominal_sigma = nominal_sigma
-                        self.octave_amount = amount_of_octaves
+                        if is_prior_x2_scale:
+                                self.nominal_sigma = nominal_sigma * 2
+                                self.octave_amount = amount_of_octaves #+ 1
+                        else:
+                                self.nominal_sigma = nominal_sigma
+                                self.octave_amount = amount_of_octaves
 
-                self.threshhold = threshhold
-                self.counter = 0
+                        self.threshhold = threshhold
+                        self.counter = 0
 
         def show_keypoint(self, keypoints, show_scale=True, show_dots=True, all_at_once=False,\
                                 show_on_DoG=True, dpi=80, scale_fig_coeff=1, DoG=[]): #second attempt
@@ -130,7 +143,7 @@ class SIFT:
                 sigma_arr = np.array([(sigma_counter*self.k**ind, np.array((random.randint(0,100), random.randint(0,100), random.randint(0,100))) / 100)
                                 for ind in range(1, self.octave_amount * (self.s + 1) + 1)])
 
-                print(sigma_arr.shape, sigma_arr)
+                # print(sigma_arr.shape, sigma_arr)
 
                 # print(keypoints)
                 for keypoint in keypoints:
@@ -189,9 +202,9 @@ class SIFT:
 
                 dL_x = (np.roll(extra_keypoint_enviroment_x, -1, axis=1) -\
                         np.roll(extra_keypoint_enviroment_x, 1, axis=1))[:,1:-1]
-                dL_x[dL_x == 0] = 0.01
+                dL_x[dL_x == 0] = 0.0001
 
-                angles = np.arctan(dL_y / dL_x)
+                angles = np.arctan2(dL_y, dL_x)
                 angles[angles < 0] += 2 * np.pi
                 #converting to grad
                 angles = angles / (2 * np.pi) * 360
@@ -213,11 +226,15 @@ class SIFT:
                 sigma0 = sqrt(self.min_sigma**2 - self.nominal_sigma**2)
                 # sample_img = gaussian(sample_img, sigma0)
                 
+                #sigmas for each sacle
+                scale_sigmas = [self.min_sigma*self.k**ind for ind in range(self.s + 3)]
+
                 #sigmas to smooth_with
-                sigma_list = [self.min_sigma]
-                for s in range(1, self.s+3):
-                        new_sigma = self.min_sigma*self.k**s
-                        sigma_list.append(sqrt(new_sigma**2 - sigma_list[-1]**2))
+                sigma_list = []
+                for i in range(1, len(scale_sigmas)):
+                        # new_sigma = self.min_sigma*self.k**s
+                        # print(new_sigma, sqrt(new_sigma**2 - sigma_list[-1]**2))
+                        sigma_list.append(sqrt(scale_sigmas[i]**2 - scale_sigmas[i - 1]**2))
 
                 scale_space = []
                 for octave_num in range(self.octave_amount):
@@ -233,6 +250,7 @@ class SIFT:
                                         octave.append((sample_img, self.min_sigma, gradients, angles))
                                         
                                 else:
+
                                         if sub_sample_num == 0:
 
                                                 last_octave = scale_space[-1]
@@ -244,11 +262,11 @@ class SIFT:
                                         
                                         else:
                                                 
-                                                sample_img = gaussian(sample_img, sigma_list[sub_sample_num])
+                                                sample_img = gaussian(sample_img, sigma_list[sub_sample_num - 1])
                                                 angles = self.grad_angles(sample_img)
                                                 gradients = sobel(sample_img)
-                                                octave.append((sample_img, sigma_list[sub_sample_num], gradients, angles))
-
+                                                octave.append((sample_img, sigma_list[sub_sample_num - 1], gradients, angles))
+                                
                         scale_space.append(np.array(octave))
 
                 return scale_space
@@ -258,10 +276,14 @@ class SIFT:
                 
                 # gauss_pyramid = self.create_gaussian_pyramid()
 
+                sigmas_in_octave = np.zeros((self.s+2, ))
+                for ind in range(sigmas_in_octave.shape[0]):
+                        sigmas_in_octave[ind] = self.min_sigma * self.k ** ind
+
                 DoG = []
                 for octave in gauss_pyramid:
                         
-                        img_in_octave, sigmas_in_octave = np.array(octave[:, 0]), np.array(octave[:, 1])[:-1:]
+                        img_in_octave = np.array(octave[:, 0])
                         DoG_in_octave = (img_in_octave - np.roll(img_in_octave, 1, axis=0))[1:]
 
                         DoG.append(np.array((DoG_in_octave, sigmas_in_octave)).T)
@@ -335,6 +357,7 @@ class SIFT:
                                 var_offset = correct_offset(var, (-np.linalg.inv(d2Dd2var)).dot(dDdvar))
                                 counter += 1
 
+
                         return var, d2Dd2var[0:2, 0:2], D
                         
                 new_var, Hessian, D_at_point = find_accurate_extreme(row, col)
@@ -390,6 +413,7 @@ class SIFT:
                                         # debug_draw(DoG_octave[index, 0], (row, col), DoG_octave[index, 1])
                                         var = self.amend_point(row, col, index, DoG_octave)#, mid_sigma, low_lvl, mid_lvl, top_lvl)
                                         if (np.array(var) >= 0).all():
+
                                                 extreme_points.append(var)
 
                 return extreme_points
@@ -411,7 +435,9 @@ class SIFT:
                                 
                                 extremes = self.find_all_extremes(index, DoG_octave)
 
+                                print('scale=', img_scale, 'index=', index, 'max intens=', DoG_octave[index, 0].max(), 'min instense=', DoG_octave[index, 0].min())
                                 if len(extremes) != 0:
+                                        print(len(extremes))
                                         extremes = np.array(extremes)
                                         keypoints.append((extremes, DoG_octave[index, 1], img_scale))
 
@@ -452,33 +478,18 @@ class SIFT:
                         
                         return kernel / kernel.sum()
 
-                def build_histrogram(gradient_env, angles_env, amount_of_bins, is_trilinear_inrepolation=False):
+                def build_histrogram(gradient_env, angles_env, amount_of_bins):
                 
                         histogram = np.zeros((amount_of_bins,))
 
                         #creating histogram index from angles
                         angles_env = np.trunc(angles_env / (360 / amount_of_bins))
 
-                        if is_trilinear_inrepolation:
-                                d_unit = 1 / amount_of_bins
-
                         #calculating histogram itself
                         for i in range(angles_env.shape[0]):
                                 for j in range(angles_env.shape[1]):
 
-                                        #interpolation with 1 neighbour
-                                        if is_trilinear_inrepolation:
-                                                
-                                                for ind in range(histogram.shape[0]):
-
-                                                        d = d_unit * abs(ind - int(angles_env[i, j]))
-                                                        if d > 1 * d_unit:
-                                                                d = 1
-
-                                                        histogram[ind] += (1 - d) * gradient_env[i, j]
-
-                                        else:
-                                                histogram[int(angles_env[i, j])] += 1 * gradient_env[i, j]
+                                        histogram[int(angles_env[i, j])] += 1 * gradient_env[i, j]
 
                         #converting to [0, 1]
                         # histogram /= histogram.max()
@@ -488,6 +499,13 @@ class SIFT:
                 #prepering gradient by multiplying by Gauss kernel and angles
                 def sample_grad_and_angles(keypoint, offset, sigma):
                                                                                         #get the closest Image with scale
+                        #is enought place to take 16*16 enviroment?
+                        def check_descr_cond(keypoint, descriptor_window_width=16):
+
+                                x, y, radius = np.ceil(keypoint[1]), np.ceil(keypoint[0]), np.ceil(descriptor_window_width*sqrt(2))
+
+                                return (gradient.shape[1] - x > radius) and (x > radius) and\
+                                        (gradient.shape[0] - y > radius) and (y > radius)
 
                         (k_y, k_x, _) = int(keypoint[0]), int(keypoint[1]), keypoint[2]
 
@@ -497,7 +515,7 @@ class SIFT:
                         #smoothing gradients
                         gradients = gradient[k_y-offset:k_y+offset+1, k_x-offset:k_x+offset+1]
 
-                        if gradients.size != (2*offset+1) ** 2:
+                        if (gradients.size != (2*offset+1) ** 2) or not check_descr_cond(keypoint):
                                 return np.array([]), np.array([])
 
                         gradients = gradients * fixed_gauss_kernel(sigma, offset)
@@ -517,9 +535,10 @@ class SIFT:
 
                                 descriptor /= sqrt(np.sum(descriptor * descriptor))
                                 #just like Lowe says
+                                # norm = sqrt(np.sum(descriptor * descriptor))
                                 descriptor = np.clip(descriptor, 0, 0.2)
 
-                                return descriptor / sqrt(np.sum(descriptor * descriptor))                          
+                                return descriptor / sqrt(np.sum(descriptor * descriptor))
 
                         #creating hist with shape (hist_width, hist_width) and assign it's coordinate respecting to keypoint
                         #array of rows = (sub_hist_array, sub_hist_coords_array)
@@ -583,7 +602,7 @@ class SIFT:
                         def assign_value(sub_hists_arr, descriptor_window_width, keypoint_with_ori, hist_width, hist_bins):
 
                                 def gauss_weight(x, y, sigma):
-                                        return np.exp(-(x**2 + y**2) / (2 * sigma**2)) / (2 * np.pi * sigma**2)
+                                        return np.exp(-(x**2 + y**2) / (2 * sigma**2))# / (2 * np.pi * sigma**2)
 
                                 orientation = keypoint_with_ori[3]
                                 rad_ori = orientation / 360 * 2 * np.pi
@@ -679,7 +698,7 @@ class SIFT:
                                 return sub_histograms_array
 
                         sub_histograms_array = create_sub_regions(hist_width, hist_bins, descriptor_window_width)
-                        assign_value(sub_histograms_array, descriptor_window_width, keypoint_with_ori, hist_width, hist_bins)  
+                        assign_value(sub_histograms_array, descriptor_window_width, keypoint_with_ori, hist_width, hist_bins)
                         descriptor = convert_sub_hists_to_desc(sub_histograms_array).reshape(1, -1)
 
                         return (*keypoint_with_ori[:3], descriptor)
@@ -707,15 +726,35 @@ class SIFT:
 
                         return clipped_interpolated_ori % 360
 
+                #smothing hist
+                def smooth_hist(histogram, kernel):
+
+                        tmp_histogram = np.pad(histogram, kernel.shape[0]//2)
+                        tmp_histogram[0] = tmp_histogram[-3]
+                        tmp_histogram[1] = tmp_histogram[-4]
+                        tmp_histogram[-1] = tmp_histogram[2]
+                        tmp_histogram[-2] = tmp_histogram[3]
+
+                        new_hist = np.zeros(histogram.shape)
+                        for i in range(new_hist.shape[0]):
+                                new_hist[i] = tmp_histogram[i:i+kernel.shape[0]] @ kernel
+
+                        return new_hist
+
                 #creating main histogram to define orientation
                 main_gradient, main_angles = sample_grad_and_angles(keypoint, 0, 1.5*keypoint[2])
+                # main_gradient, main_angles = sample_grad_and_angles(keypoint, 0, 1.5*keypoint[2])
 
                 if main_gradient.size == 0:
                         return []
 
                 main_histogram = build_histrogram(main_gradient, main_angles, amount_of_bins)
 
-                #moving average filter
+                #smooth
+                # kernel = np.array([1, 4, 6, 4, 1])
+                # main_histogram = smooth_hist(main_histogram, kernel=(kernel/kernel.sum()))
+
+                #moving average
                 # for _ in range(ma_convolve_amount):
                 #         main_histogram = convolve(main_histogram, np.ones((moving_aver_param,)) / moving_aver_param, mode='nearest')
 
@@ -735,7 +774,10 @@ class SIFT:
                 if int(scale) == 0:
                         return GaussPyr[0]
                 
-                index = int(log(scale, 2) + 1)
+                if self.is_prior_x2_scale:
+                        index = int(log(scale, 2) + 1)
+                else:
+                        index = int(log(scale, 2))
 
                 return GaussPyr[index]
 
@@ -839,6 +881,81 @@ class SIFT:
 
                 return arr, DoG
 
-# sift_inst = SIFT(img_as_float(color.rgb2gray(imread(sys.argv[1]))))
-# img_keypoints_and_features, DoG = sift_inst.get_features()
-# sift_inst.show_keypoint(img_keypoints_and_features, all_at_once=True, show_scale=True, show_dots = True, scale_fig_coeff=1, DoG=DoG, show_on_DoG=True)
+        def draw_matches(self, img, mapped_to_img, points=[], mapped_points=[], scale_coeff=1, dpi=80):
+                
+                #base drawing
+                figsize = scale_coeff * (img.shape[1] + mapped_to_img.shape[1]) / dpi,\
+                                scale_coeff * (img.shape[0] + mapped_to_img.shape[0]) / dpi
+                fig = plt.figure(figsize=figsize, dpi=dpi)
+
+                ratio_along_y = img.shape[0] / (img.shape[0] + mapped_to_img.shape[0])
+                ratio_along_x = img.shape[1] / (img.shape[1] + mapped_to_img.shape[1])
+                
+                ax_img = fig.add_axes([0, 1 - ratio_along_y, ratio_along_x, ratio_along_y])
+                ax_img.axis([0, img.shape[1], img.shape[0], 0])
+                
+                ax_mapped_to_img = fig.add_axes([ratio_along_x, 0, 1 - ratio_along_x, 1 - ratio_along_y])
+                ax_img,ax_mapped_to_img.axis([0, mapped_to_img.shape[1], mapped_to_img.shape[0], 0])
+
+                ax_img.set_xticks([]), ax_img.set_yticks([])
+                ax_mapped_to_img.set_xticks([]), ax_mapped_to_img.set_yticks([])
+
+                ax_img.imshow(img, cmap="gray")
+                ax_mapped_to_img.imshow(mapped_to_img, cmap="gray")
+
+                #corresponding points drawing and connecting lines
+                # points = np.r_[points, points[0,:][np.newaxis, :]]
+                # print(points.shape, mapped_points)
+                # if (points.shape[0] != 1) and (mapped_points.shape[0] != 1):
+                ax_img.scatter(points[:, 1], points[:, 0], color="r")
+                ax_mapped_to_img.scatter(mapped_points[:, 1], mapped_points[:, 0], color='r')
+                # else:
+                        # ax_img.scatter(points[0], points[1], color="r")
+                        # ax_mapped_to_img.scatter(mapped_points[0], mapped_points[1], color='r')
+
+                for i in range(points.shape[0]):
+
+                        con = ConnectionPatch(xyA=points[i, ::-1], xyB=mapped_points[i, ::-1], coordsA="data", coordsB="data",\
+                                                axesA=ax_img, axesB=ax_mapped_to_img, color="green")
+                        fig.add_artist(con)
+
+                plt.show()
+
+        def build_matches(self, set1, set2):
+
+                def find_close_point_ind_by_ind(set_where_we_find, set_index_from, index, ratio=0.8):
+
+                        point = set_index_from[index, :]
+                        diff = np.concatenate(set_where_we_find[:, 3]) - point[3]
+                        diff = np.sqrt(np.sqrt(np.sum(diff * diff, axis=1)))
+                        closest_index = np.argmin(diff)
+
+                        closest_distance = diff[closest_index]
+                        diff[closest_index] = diff.max() + 3
+                        second_close_distance = diff[np.argmin(diff)]
+
+                        if closest_distance / second_close_distance > ratio:
+                                return -1
+                        else:
+                                return closest_index
+
+                #i, j, i1 - indeces
+                #i from pairs1 -> j from pairs2
+                #j -> i1 from pairs1
+                # i =?= i1
+                found_matches = np.zeros((1,4))
+                for i in range(set1.shape[0]):
+
+                        j = find_close_point_ind_by_ind(set2, set1, i)
+                        i1 = find_close_point_ind_by_ind(set1, set2, j)
+
+                        if i1 == i:
+                                pair = np.r_[set1[i, :2], set2[j, :2]].reshape(1,4)
+                                found_matches = np.concatenate((found_matches, pair))
+                        
+                return np.array(found_matches[1:, :])
+
+
+sift_inst = SIFT(img_as_float(color.rgb2gray(imread(sys.argv[1]))), is_prior_x2_scale=True)
+img_keypoints_and_features, DoG = sift_inst.get_features()
+sift_inst.show_keypoint(img_keypoints_and_features, all_at_once=True, show_scale=True, show_dots=False, scale_fig_coeff=1, DoG=DoG, show_on_DoG=True)
