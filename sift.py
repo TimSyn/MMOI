@@ -74,13 +74,14 @@ class SIFT:
 
                         if is_prior_x2_scale:
                                 self.nominal_sigma = nominal_sigma * 2
-                                self.octave_amount = amount_of_octaves + 1
+                                self.octave_amount = amount_of_octaves
                         else:
                                 self.nominal_sigma = nominal_sigma
                                 self.octave_amount = amount_of_octaves
 
                         self.threshhold = threshhold
                         self.counter = 0
+                        self.descr_list = []
 
         def show_keypoint(self, keypoints, show_scale=True, show_dots=True, all_at_once=False,\
                                 show_on_DoG=True, dpi=80, scale_fig_coeff=1, DoG=[]): #second attempt
@@ -552,7 +553,7 @@ class SIFT:
                         return gradients, angles
 
                 #building subregion and descriptor itself
-                def add_descriptor(keypoint_with_ori, gauss_pyr_elem, descriptor_window_width=16, desc_sigma=4, hist_width=4, hist_bins=8):
+                def add_descriptor(keypoint_with_ori, gauss_pyr_elem, descriptor_window_width=16, desc_sigma=8, hist_width=4, hist_bins=8):
 
                         #normilized to unit vector
                         def convert_sub_hists_to_desc(histograms):
@@ -627,6 +628,19 @@ class SIFT:
 
                                 plt.show()
 
+                        #debug function
+                        def compare_descr(des, width=1400, height=400, dpi=80, color='r'):
+
+                                figsize = width / 80, height / 80
+                                fig = plt.figure(figsize=figsize, dpi=dpi)
+                                ax = fig.add_axes([0.1, 0.1, 1, 1])
+
+                                x = list(range(1, 129))
+                                ax.bar(x, list(des), color=color)
+                                ax.set_xticks(x)
+                                ax.tick_params('x', labelrotation=30)
+
+
                         def assign_value(sub_hists_arr, descriptor_window_width, keypoint_with_ori, hist_width, hist_bins):
 
                                 def gauss_weight(x, y, sigma):
@@ -640,11 +654,11 @@ class SIFT:
                                 orient_point =  Rot_matr @ np.array([10,0]) + keypoint_with_ori[:2][::-1]
                                 # print(orientation)
                                 # print(Rot_matr)
-                                # points_for_debug_rot =[]
-                                # points_for_debug = []
-                                # points_for_debug.append(orient_point)
-                                # points_for_debug_rot.append(orient_point)
-                                # points_for_debug_rot.append([keypoint_with_ori[1], keypoint_with_ori[0]])
+                                points_for_debug_rot =[]
+                                points_for_debug = []
+                                points_for_debug.append(orient_point)
+                                points_for_debug_rot.append(orient_point)
+                                points_for_debug_rot.append([keypoint_with_ori[1], keypoint_with_ori[0]])
                                 for i in range(-descriptor_window_width//2, descriptor_window_width//2 + 1):
 
                                         for j in range(-descriptor_window_width//2, descriptor_window_width//2 + 1):
@@ -664,10 +678,10 @@ class SIFT:
                                                 y, x = int(round(rot_sample_coords[1] + keypoint_with_ori[0])),\
                                                         int(round(rot_sample_coords[0] + keypoint_with_ori[1]))
 
-                                                # points_for_debug_rot.append((x, y))
-                                                # points_for_debug.append((keypoint_with_ori[1] + j, keypoint_with_ori[0] + i))
+                                                points_for_debug_rot.append((x, y))
+                                                points_for_debug.append((keypoint_with_ori[1] + j, keypoint_with_ori[0] + i))
 
-                                                sample_magn = gradient[y, x] * gauss_weight(j, i, desc_sigma/2)
+                                                sample_magn = gradient[y, x] * gauss_weight(j, i, desc_sigma)
                                                 sample_angle = (grad_angles[y, x] - orientation) % 360
                                                 closest_hists_amount = len(closest_hists)
                                                 # print(axis_hist_distance, 'axis_hist_distance')
@@ -722,15 +736,37 @@ class SIFT:
 
                                 # print("new")
                                 # print(sub_histograms_array)
-                                # print(keypoint_with_ori[3])
-                                # debug_draw(gauss_pyr_elem[0], np.array(points_for_debug))
-                                # debug_draw(gauss_pyr_elem[0], np.array(points_for_debug_rot))
+                                # keypoint_with = np.array(keypoint_with_ori[:2])
+                                # p = np.array([125, 230])
+                                # # if ((np.abs(keypoint_with * 0.5 - p)< 2).all() or (np.abs(keypoint_with - p) < 2).all() or\
+                                # #         (np.abs(keypoint_with * 2 - p) < 2).all() or (np.abs(keypoint_with * 4 - p) < 2).all()):
+                                # if (keypoint_with[1] == 115.0) and (keypoint_with[0] == 62.0):
+                                #         print(keypoint_with_ori)
+                                #         debug_draw(gauss_pyr_elem[0], np.array(points_for_debug))
+                                #         debug_draw(gauss_pyr_elem[0], np.array(points_for_debug_rot))
+                                #         plot_histograms(sub_histograms_array[:, 0])
+
+                                # p = np.array([200, 178])
+                                # if ((np.abs(keypoint_with * 0.5 - p)< 1).all() or (np.abs(keypoint_with - p) < 1).all() or\
+                                #         (np.abs(keypoint_with * 2 - p) < 1).all() or (np.abs(keypoint_with * 4 - p) < 1).all()):
+                                # if (keypoint_with[1] == 178.19266031568677) and (keypoint_with[0] == 199.46211832224307):
+                                #         print(keypoint_with_ori)
+                                #         debug_draw(gauss_pyr_elem[0], np.array(points_for_debug))
+                                #         debug_draw(gauss_pyr_elem[0], np.array(points_for_debug_rot))
+                                #         plot_histograms(sub_histograms_array[:, 0])
+                                
                                 return sub_histograms_array
 
                         sub_histograms_array = create_sub_regions(hist_width, hist_bins, descriptor_window_width)
                         assign_value(sub_histograms_array, descriptor_window_width, keypoint_with_ori, hist_width, hist_bins)
                         descriptor = convert_sub_hists_to_desc(sub_histograms_array).reshape(1, -1)
 
+                        # if (keypoint_with_ori[0] == 39.403853292300525) and (keypoint_with_ori[1] == 62.090737184964894):
+                        #         compare_descr(descriptor, color='r')
+
+                        # if (keypoint_with_ori[0] == 61.86978715657008) and (keypoint_with_ori[1] == 31.477805461118066):
+                        #         compare_descr(descriptor, color='y')
+                        
                         return (*keypoint_with_ori[:3], descriptor)
                 
                 #finding accurate rotation by fitting porabola (n_left, hist[n_left]) (n_max, hist[n_max]) (n_right, hist[n_right])
@@ -750,8 +786,8 @@ class SIFT:
 
                         #checking limits
                         clipped_interpolated_ori = porabola.vertex()
-                        if (clipped_interpolated_ori < n_max_or - bin_index_equivalent) or\
-                                (clipped_interpolated_ori > n_max_or + bin_index_equivalent):
+                        if (clipped_interpolated_ori < n_max_or - bin_index_equivalent / 2) or\
+                                (clipped_interpolated_ori > n_max_or + bin_index_equivalent / 2):
                                 clipped_interpolated_ori = n_max_or
 
                         return clipped_interpolated_ori % 360
@@ -953,7 +989,7 @@ class SIFT:
 
         def build_matches(self, set1, set2):
 
-                def find_close_point_ind_by_ind(set_where_we_find, set_index_from, index, ratio=0.8):
+                def find_close_point_ind_by_ind(set_where_we_find, set_index_from, index, ratio=0.9):
 
                         point = set_index_from[index, :]
                         diff = np.concatenate(set_where_we_find[:, 3]) - point[3]
@@ -965,25 +1001,51 @@ class SIFT:
                         second_close_distance = diff[np.argmin(diff)]
 
                         if closest_distance / second_close_distance > ratio:
-                                return -1
+                                return -1, 0
                         else:
-                                return closest_index
+                                return closest_index, closest_distance
 
                 #i, j, i1 - indeces
                 #i from pairs1 -> j from pairs2
                 #j -> i1 from pairs1
                 # i =?= i1
-                found_matches = np.zeros((1,4))
-                for i in range(set1.shape[0]):
+                found_matches = np.zeros((1, 5))
+                # for i in range(set1.shape[0]):
+                while True:
 
-                        j = find_close_point_ind_by_ind(set2, set1, i)
-                        i1 = find_close_point_ind_by_ind(set1, set2, j)
+                        pair = np.array([])
+                        for i in range(set1.shape[0]):
 
-                        if i1 == i:
-                                pair = np.r_[set1[i, :2], set2[j, :2]].reshape(1,4)
-                                found_matches = np.concatenate((found_matches, pair))
+
+                                j, dist1 = find_close_point_ind_by_ind(set2, set1, i)
+                                i1, dist2 = find_close_point_ind_by_ind(set1, set2, j)
+
+                                # p1 = np.array([199.46211832224307, 178.19266031568677])
+                                if (i1 == i):# and ((p - set1[i, :2] == 0).all() or (p - set2[i, :2] == 0).all()):
+                                        pair = np.r_[set1[i, :2], set2[j, :2], dist1].reshape(1,5)
+
+                                        if i == 1:
+                                                set1 = set1[1:, :]
+                                        if i == set1.shape[0] - 1:
+                                                set1 = set1[:-1, :]
+                                        else:
+                                                set1 = np.concatenate((set1[:i-1, :], set1[i+1:, :]))
+
+                                        if j == 1:
+                                                set2 = set2[1:, :]
+                                        if j == set2.shape[0] -1:
+                                                set2 = set2[:-1, :]                                        
+                                        else:
+                                                set2 = np.concatenate((set2[:j-1, :], set2[j+1:, :]))
+
+                                        found_matches = np.concatenate((found_matches, pair))
+                                        break
                         
-                return np.array(found_matches[1:, :])
+                        if pair.size == 0:
+                                break
+
+                sorted(found_matches, key=lambda pair: pair[4])
+                return np.array(found_matches[1:50, :4])
 
 
 sift_inst = SIFT(img_as_float(color.rgb2gray(imread(sys.argv[1]))), is_prior_x2_scale=True)
