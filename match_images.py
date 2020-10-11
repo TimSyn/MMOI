@@ -4,6 +4,7 @@ from skimage import img_as_float, color
 import sys
 from skimage.io import imread, imshow, imsave
 from sift import SIFT
+from sift import my_imshow
 from numpy.random import shuffle
 import matplotlib.pyplot as plt
 from matplotlib.patches import ConnectionPatch
@@ -86,19 +87,21 @@ class Line:
 
                 return (side_values >= 0).all() or (side_values <= 0).all()
 
+#pair = (y1, x1, y2, x2)
 class RANSAC:
 
         #perspective matrix?
         #points = (y, x)
 
-        def __init__(self, img, mapped_to_img, features, mapped_to_features, inliers_ratio=0.7, err=0.5):
+        def __init__(self, img, mapped_to_img, found_pairs, sift_inst, inliers_ratio=0.41, err=10, seed=1):
 
                 self.img = img
                 self.mapped_to_img = mapped_to_img
-                self.features1 = features
-                self.features2 = mapped_to_features
+                self.found_pairs = found_pairs
                 self.inliers_ratio = inliers_ratio
-                self.feature_err = err
+                self.err = err
+                self.sift_inst = sift_inst
+                self.seed = seed
 
         def is_forming_convex_polygon(self, points):
 
@@ -117,55 +120,20 @@ class RANSAC:
                 return True
 
         #preparations to make another step of RANSAC (returning corresponding points)
-        def shuffle_for_RANSAC_step(self): #try to use features
+        def shuffle_for_RANSAC_step(self):
 
-                shuffle(self.features1)
+                np.random.seed(self.seed)
+                shuffle(self.found_pairs)
 
-                # checkin determinant or check is quadangle or not
-                while True:
-
-                        while not self.is_forming_convex_polygon(self.features1[:4, :2]):
-                                shuffle(self.features1)
-
-                        debug_list = []
-                        transform_to_points = []
-                        for point in self.features1[:4, :]:
-
-                                diff = np.concatenate(self.features2[:, 3]) - point[3]
-                                closest_point = self.features2[np.argmin(np.sum(diff * diff, axis=1)), :]
-
-                                transform_to_points.append(closest_point)
-                                debug_list.append(closest_point)
-
-                        debug_list = np.array(debug_list)
-                        transform_to_points = np.array(transform_to_points)[:, :2]
-
-                        if self.is_forming_convex_polygon(transform_to_points):# and\
-                                # self.is_inside_mapped_img(transform_to_points):
-
-                                #debug
-                                feature_diff = np.concatenate(debug_list[:, 3]) - np.concatenate(self.features1[:4, 3])
-                                print(np.c_[self.features1[:4, :2], transform_to_points],
-                                        np.sqrt(np.sum(feature_diff * feature_diff, axis=1)), "corresponding points")
-
-                                draw_matches(self.img, self.mapped_to_img, self.features1[:4, :2], transform_to_points)
-                                #
-                                return self.features1[:4, :2], transform_to_points
-
-                        shuffle(self.features1)
+                return self.found_pairs[:4, :2], self.found_pairs[:4, 2:]
 
         #transforming coords using matrix
-        def transform_coords(self, coords, matrix): # fix homo_w equals 0!
+        def transform_coords(self, coords, matrix):# fix homo_w equals 0!
 
-                homogeneous_coords = np.c_[coords, np.ones((coords.shape[0], 1))]
-                # new_homogeneous_coords = np.zeros(shape=homogeneous_coords.shape)
+                homogeneous_coords = np.c_[np.roll(coords, 1, axis=1), np.ones((coords.shape[0], 1))]
 
-                # for i in range(coords.shape[0]):
-
-                #         new_homogeneous_coords[i, :] = matrix @ homogeneous_coords[i, :]
-
-                new_homo_y = np.sum(matrix[0, :] * homogeneous_coords, axis=1)
-                new_homo_x = np.sum(matrix[1, :] * homogeneous_coords, axis=1)
+                new_homo_x = np.sum(matrix[0, :] * homogeneous_coords, axis=1)
+                new_homo_y = np.sum(matrix[1, :] * homogeneous_coords, axis=1)
                 new_homo_w = np.sum(matrix[2, :] * homogeneous_coords, axis=1)
 
                 new_homogeneous_coords = np.c_[new_homo_y, new_homo_x, new_homo_w]
@@ -174,7 +142,7 @@ class RANSAC:
                 return new_homogeneous_coords[:, :2]
 
         def is_inside_mapped_img(self, points):
-
+        
                 if points.ndim > 1:
                 
                         is_within_x_lim = (points[:, 1] >= 0).all() and (points[:, 1] < self.mapped_to_img.shape[1]).all()
@@ -187,74 +155,90 @@ class RANSAC:
 
                 return is_within_x_lim and is_within_y_lim
 
-        def calc_inliers_ratio(self, transformed_coords):
+        def calc_inliers_ratio(self, matrix):
 
-                founded_points_counter, inliers_points_counter = 0, 0
+                inliers = 0
 
-                for transformed_coord in transformed_coords:
+                for i in range(self.found_pairs.shape[0]):
 
-                        if self.is_inside_mapped_img(transformed_coord):
-                                
-                                diff_arr = self.features2[:, :2] - transformed_coord[:2]
-                                errors = np.sqrt(np.array(np.sum(diff_arr * diff_arr, axis=1), dtype=np.float32))
-                                closest_point_index = np.argmin(errors)
+                        point_from = np.r_[self.found_pairs[i, :2][::-1], 1] 
+                        point_to = self.found_pairs[i, 2:][::-1]
 
-                                #if errors[closest_point_index] <= sqrt(2 * self.error**2):
-                                feature_diff = transformed_coord[3] - self.features2[closest_point_index, 3]
-                                if sqrt(np.sum((feature_diff * feature_diff))) < self.feature_err:
-                                        inliers_points_counter += 1
+                        RANSAC_new_point = matrix @ point_from
+                        if RANSAC_new_point[2] == 0:
+                                continue
 
-                                founded_points_counter += 1
+                        RANSAC_new_point = RANSAC_new_point[:2] / RANSAC_new_point[2]
 
-                return inliers_points_counter , founded_points_counter
-                                
+                        diff = point_to - RANSAC_new_point
+                        if sqrt(np.sum(diff * diff)) < self.err:
+                                inliers += 1
+                
+                return inliers
+                        
         #trying to find matrix that accepts inliers_ratio
         def find_matrix(self):
                 
                 curr_ratio = 0
-                inliers, outliers = 0, 0
+                inliers, outliers = 0, self.found_pairs.shape[0]
                 max_ratio = curr_ratio
                 while curr_ratio < self.inliers_ratio:
 
-                        # if curr_ratio > max_ratio:
-                        print(curr_ratio, inliers, outliers)
-                                # max_ratio = curr_ratio
-
                         mapping_points, mapped_points = self.shuffle_for_RANSAC_step()
                         
-                        matrix = cv2.getPerspectiveTransform(np.array(mapping_points, dtype=np.float32),
-                                                                np.array(mapped_points, dtype=np.float32))
+                        matrix = cv2.getPerspectiveTransform(np.array(np.roll(mapping_points, 1, axis=1), dtype=np.float32),
+                                                                np.array(np.roll(mapped_points, 1, axis=1), dtype=np.float32))
 
-                        #transformin coordinates from features1 to evaluate error
-                        new_coords_and_features = np.c_[self.transform_coords(self.features1[:, :2], matrix), self.features1[:, 2:]] 
-                        inliers, outliers = self.calc_inliers_ratio(new_coords_and_features)
+                        inliers = self.calc_inliers_ratio(matrix)
                         curr_ratio = inliers / outliers
-                
-                print(curr_ratio)
+                        print(curr_ratio, inliers, outliers)
+                        # self.sift_inst.draw_matches(img, changed_img, mapping_points, mapped_points, scale_coeff=0.1)
+
+                # self.sift_inst.draw_matches(img, changed_img, mapping_points, mapped_points)
                 return matrix
 
         #corresponding features with matrix to another features
         def get_matches(self, matrix):
                 
-                return np.c_[self.features1[:, :2], self.transform_coords(self.features1[:, :2], matrix)]
+                return np.c_[self.found_pairs[:, :2], self.transform_coords(self.found_pairs[:, :2], matrix)]
 
+        #returning array(x1, y1, x2, y2)
         def generate_matches(self):
 
                 perpective_matrix = self.find_matrix()
+                new_img = cv2.warpPerspective(self.img, perpective_matrix, self.mapped_to_img.shape[::-1])
 
-                return self.get_matches(perpective_matrix)
+                return self.get_matches(perpective_matrix), new_img
 
-img, changed_img = img_as_float(color.rgb2gray(imread(sys.argv[1]))), \
-                        img_as_float(color.rgb2gray(imread(sys.argv[2])))
+#__my own version__
+img = cv2.imread(sys.argv[1], cv2.IMREAD_GRAYSCALE)
+changed_img = cv2.imread(sys.argv[2], cv2.IMREAD_GRAYSCALE)
 
-img_features, _ = SIFT(img).get_features()
-changed_img_features, _ = SIFT(changed_img).get_features()
+empty_sift_inst = SIFT(is_static=True)
 
-matched_points = RANSAC(img, changed_img, img_features, changed_img_features).generate_matches()
+# img_features, _ = SIFT(img).get_features()
+# changed_img_features, _ = SIFT(changed_img).get_features()
 
-draw_matches(img, changed_img, matched_points[:, :2], matched_points[:, 2:])
+# #_original_sift_
+sift = cv2.xfeatures2d.SIFT_create(contrastThreshold=0.1)
+kp, des = sift.detectAndCompute(img, None)
+kp_changed, des_changed = sift.detectAndCompute(changed_img, None)
+img_features = np.zeros(shape=(len(des), 4), dtype=np.object)
+changed_img_features = np.zeros(shape=(len(des_changed), 4), dtype=np.object)
 
-# points1 = [[1, 1], [1, img.shape[1]-1], [img.shape[0]-1, img.shape[1]-1], [img.shape[0]-1, 1]]
-# points2 = [[1, 1], [1, changed_img.shape[1]-1], [changed_img.shape[0]-1, changed_img.shape[1]-1], [changed_img.shape[0]-1, 1]]
+for i in range(img_features.shape[0]):
+        img_features[i, :] = kp[i].pt[1], kp[i].pt[0], kp[i].size, des[i].reshape(1, -1)
+for i in range(changed_img_features.shape[0]):
+        changed_img_features[i, :] = kp_changed[i].pt[1], kp_changed[i].pt[0], kp_changed[i].size, des_changed[i].reshape(1, -1)
 
-# draw_matches(img, changed_img, np.array(points1), np.array(points2))
+print(img_features.shape, changed_img_features.shape)
+# #
+
+found_pairs = empty_sift_inst.find_knn(img_features, changed_img_features, k=2, ratio=0.725)
+print(found_pairs.shape)
+found_pairs = np.concatenate((img_features[found_pairs[:, 0], :2], changed_img_features[found_pairs[:, 1], :2]), axis=1)
+# empty_sift_inst.draw_matches(img, changed_img, found_pairs[:, :2], found_pairs[:, 2:], scale_coeff=0.1)
+
+matched_points, RANSAC_img = RANSAC(img, changed_img, found_pairs, empty_sift_inst).generate_matches()
+# empty_sift_inst.draw_matches(img, changed_img, matched_points[:, :2], matched_points[:, 2:])
+imsave('4A_3_from_120_to_0.jpg', RANSAC_img)
